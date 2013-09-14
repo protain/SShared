@@ -32,6 +32,8 @@
 			this.menuStrip1 = new System.Windows.Forms.MenuStrip();
 			this.mnuOpen = new System.Windows.Forms.ToolStripMenuItem();
 			this.mnuSaveStream = new System.Windows.Forms.ToolStripMenuItem();
+			this.mnuRawOpenToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+			this.chkRefResolve = new System.Windows.Forms.CheckBox();
 			this.menuStrip1.SuspendLayout();
 			this.SuspendLayout();
 			// 
@@ -64,6 +66,7 @@
 			// 
 			this.menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.mnuOpen,
+            this.mnuRawOpenToolStripMenuItem,
             this.mnuSaveStream});
 			this.menuStrip1.Location = new System.Drawing.Point(0, 0);
 			this.menuStrip1.Name = "menuStrip1";
@@ -75,8 +78,8 @@
 			// mnuOpen
 			// 
 			this.mnuOpen.Name = "mnuOpen";
-			this.mnuOpen.Size = new System.Drawing.Size(44, 22);
-			this.mnuOpen.Text = "開く";
+			this.mnuOpen.Size = new System.Drawing.Size(114, 22);
+			this.mnuOpen.Text = "開く(ページ解析)";
 			this.mnuOpen.Click += new System.EventHandler(this.mnuOpen_Click);
 			// 
 			// mnuSaveStream
@@ -86,11 +89,32 @@
 			this.mnuSaveStream.Text = "ストリームを保存";
 			this.mnuSaveStream.Click += new System.EventHandler(this.mnuSaveStream_Click);
 			// 
+			// mnuRawOpenToolStripMenuItem
+			// 
+			this.mnuRawOpenToolStripMenuItem.Name = "mnuRawOpenToolStripMenuItem";
+			this.mnuRawOpenToolStripMenuItem.Size = new System.Drawing.Size(90, 22);
+			this.mnuRawOpenToolStripMenuItem.Text = "開く(生解析)";
+			this.mnuRawOpenToolStripMenuItem.Click += new System.EventHandler(this.mnuRawOpenToolStripMenuItem_Click);
+			// 
+			// chkRefResolve
+			// 
+			this.chkRefResolve.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+			this.chkRefResolve.AutoSize = true;
+			this.chkRefResolve.Checked = true;
+			this.chkRefResolve.CheckState = System.Windows.Forms.CheckState.Checked;
+			this.chkRefResolve.Location = new System.Drawing.Point(13, 427);
+			this.chkRefResolve.Name = "chkRefResolve";
+			this.chkRefResolve.Size = new System.Drawing.Size(124, 16);
+			this.chkRefResolve.TabIndex = 3;
+			this.chkRefResolve.Text = "参照を自動解決する";
+			this.chkRefResolve.UseVisualStyleBackColor = true;
+			// 
 			// Form1
 			// 
 			this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
 			this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
 			this.ClientSize = new System.Drawing.Size(453, 465);
+			this.Controls.Add(this.chkRefResolve);
 			this.Controls.Add(this.tvPdfDoc);
 			this.Controls.Add(this.txtStream);
 			this.Controls.Add(this.menuStrip1);
@@ -112,6 +136,8 @@
 		private System.Windows.Forms.MenuStrip menuStrip1;
 		private System.Windows.Forms.ToolStripMenuItem mnuOpen;
 		private System.Windows.Forms.ToolStripMenuItem mnuSaveStream;
+		private System.Windows.Forms.ToolStripMenuItem mnuRawOpenToolStripMenuItem;
+		private System.Windows.Forms.CheckBox chkRefResolve;
 	}
 }
 

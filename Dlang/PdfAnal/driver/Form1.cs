@@ -23,6 +23,8 @@ namespace CS_PdfAnalDriver
 			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
 			public extern static ulong analDocument(ulong key);
 			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
+			public extern static ulong analPages(ulong key);
+			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
 			public extern static void getBuff(ulong key, StringBuilder buf);
 			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
 			public extern static void getBuff(ulong key, byte[] buf);
@@ -30,52 +32,17 @@ namespace CS_PdfAnalDriver
 			public extern static void closeDocument(ulong key);
 			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
 			public extern static ulong analObjStream(ulong key, int objno);
+			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
+			public extern static ulong analObject(ulong key, int objno);
 		}
 
 		public Form1()
 		{
 			InitializeComponent();
 			key_ = 0;
-		}
-
-		private ulong key_ = 0;
-		private string fname_ = string.Empty;
-
-		private void mnuOpen_Click(object sender, EventArgs e)
-		{
-			var ofn = new OpenFileDialog();
-			ofn.Filter = "PDF Document(*.pdf)|*.pdf";
-			if(ofn.ShowDialog() != System.Windows.Forms.DialogResult.OK) {
-				return;
-			}
-			if(key_ != 0) {
-				PdfAnal.closeDocument(key_);
-				GC.Collect();
-				key_ = 0;
-				tvPdfDoc.Nodes.Clear();
-			}
-
-			fname_ = ofn.FileName;
-			key_ = PdfAnal.getPdfDocument(ofn.FileName);
-			MessageBox.Show(key_.ToString());
-			if(key_ == 0) {
-				return;
-			}
-			var len = PdfAnal.analDocument(key_);
-			//MessageBox.Show(len.ToString());
-			var buff = new byte[len]; //new StringBuilder((int)len);
-			PdfAnal.getBuff(key_, buff);
-
-			var docstr = Encoding.UTF8.GetString(buff);
-
-			var jsr = new Newtonsoft.Json.JsonReader(new StringReader(docstr));
-			var js = new Newtonsoft.Json.JsonSerializer();
-			var jsroot = js.Deserialize(jsr);
 
 			Func<Object, bool> isJsObj = (o) => { return o is JavaScriptArray || o is JavaScriptObject; };
-			Action<Object, string, TreeView, TreeNode, bool> jsoFunc = null;
-			int lvl = 0;
-			jsoFunc = (o, klbl, tv, tn, isObj) =>
+			jsoFunc = (o, klbl, tv, tn, isObj, lvl) =>
 			{
 				++lvl;
 				try {
@@ -86,8 +53,8 @@ namespace CS_PdfAnalDriver
 							var tcn = new TreeNode(lbl);
 							if(isObj) {
 								tcn.ForeColor = Color.Red;
-								tcn.Tag = i;
 							}
+							tcn.Tag = new ObjInfo { idx_ = isObj ? i : -1, pdfObj_ = jary[i] as JavaScriptObject };
 							if(!isJsObj(jary[i])) {
 								lbl = lbl + " : " + (jary[i] == null ? "null" : jary[i].ToString());
 								tcn.Text = lbl;
@@ -95,7 +62,7 @@ namespace CS_PdfAnalDriver
 							}
 							else {
 								if(tv == null) tn.Nodes.Add(tcn); else tv.Nodes.Add(tcn);
-								jsoFunc(jary[i], "", null, tcn, (lvl == 1 && i == 1));
+								jsoFunc(jary[i], "", null, tcn, (lvl == 1 && i == 1), lvl);
 							}
 						}
 					}
@@ -104,8 +71,16 @@ namespace CS_PdfAnalDriver
 						foreach(var key in jobj.Keys) {
 							if(isJsObj(jobj[key])) {
 								var tcn = new TreeNode(key);
+								var objinf = new ObjInfo { idx_ = -1, pdfObj_ = jobj[key] as JavaScriptObject };
+								if(jobj.ContainsKey("$ContentsNo")) {
+									objinf.idx_ = Convert.ToInt32(jobj["$ContentsNo"]);
+								}
+								else if(jobj.ContainsKey("$ResourcesNo")) {
+									objinf.idx_ = Convert.ToInt32(jobj["$ResourcesNo"]);
+								}
+								tcn.Tag = objinf;
 								if(tv == null) tn.Nodes.Add(tcn); else tv.Nodes.Add(tcn);
-								jsoFunc(jobj[key], key, null, tcn, false);
+								jsoFunc(jobj[key], key, null, tcn, false, lvl);
 							}
 							else {
 								var tcn = new TreeNode(key + " : " + (jobj[key] == null ? "null" : jobj[key].ToString()));
@@ -125,8 +100,94 @@ namespace CS_PdfAnalDriver
 					--lvl;
 				}
 			};
+	}
+
+		private ulong key_ = 0;
+		private string fname_ = string.Empty;
+
+		class ObjInfo
+		{
+			public int idx_ = 1;
+			public JavaScriptObject pdfObj_;
+		}
+
+		Action<Object, string, TreeView, TreeNode, bool, int> jsoFunc;
+
+		private void mnuOpen_Click(object sender, EventArgs e)
+		{
+			var ofn = new OpenFileDialog();
+			ofn.Filter = "PDF Document(*.pdf)|*.pdf";
+			if(ofn.ShowDialog() != System.Windows.Forms.DialogResult.OK) {
+				return;
+			}
+			if(key_ != 0) {
+				PdfAnal.closeDocument(key_);
+				GC.Collect();
+				key_ = 0;
+				tvPdfDoc.Nodes.Clear();
+			}
+
+			fname_ = ofn.FileName;
+			this.Text = fname_;
+			key_ = PdfAnal.getPdfDocument(ofn.FileName);
+			//MessageBox.Show(key_.ToString());
+			Debug.Write(key_.ToString());
+			if(key_ == 0) {
+				return;
+			}
+			//var len = PdfAnal.analDocument(key_);
+			var len = PdfAnal.analPages(key_);
+			//MessageBox.Show(len.ToString());
+			var buff = new byte[len]; //new StringBuilder((int)len);
+			PdfAnal.getBuff(key_, buff);
+
+			var docstr = Encoding.UTF8.GetString(buff);
+
+			var jsr = new Newtonsoft.Json.JsonReader(new StringReader(docstr));
+			var js = new Newtonsoft.Json.JsonSerializer();
+			var jsroot = js.Deserialize(jsr);
+
+			//Action<Object, string, TreeView, TreeNode, bool> jsoFunc = null;
+			int lvl = 0;
 			tvPdfDoc.Update();
-			jsoFunc(jsroot, "", tvPdfDoc, null, false);
+			jsoFunc(jsroot, "", tvPdfDoc, null, false, lvl);
+			tvPdfDoc.EndUpdate();
+		}
+
+		private void mnuRawOpenToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+			var ofn = new OpenFileDialog();
+			ofn.Filter = "PDF Document(*.pdf)|*.pdf";
+			if(ofn.ShowDialog() != System.Windows.Forms.DialogResult.OK) {
+				return;
+			}
+			if(key_ != 0) {
+				PdfAnal.closeDocument(key_);
+				GC.Collect();
+				key_ = 0;
+				tvPdfDoc.Nodes.Clear();
+			}
+
+			fname_ = ofn.FileName;
+			this.Text = fname_;
+			key_ = PdfAnal.getPdfDocument(ofn.FileName);
+			Debug.Write(key_.ToString());
+			if(key_ == 0) {
+				return;
+			}
+			var len = PdfAnal.analDocument(key_);
+			var buff = new byte[len];
+			PdfAnal.getBuff(key_, buff);
+
+			var docstr = Encoding.UTF8.GetString(buff);
+
+			var jsr = new Newtonsoft.Json.JsonReader(new StringReader(docstr));
+			var js = new Newtonsoft.Json.JsonSerializer();
+			var jsroot = js.Deserialize(jsr);
+
+			int lvl = 0;
+			tvPdfDoc.Update();
+			jsoFunc(jsroot, "", tvPdfDoc, null, false, lvl);
 			tvPdfDoc.EndUpdate();
 		}
 
@@ -141,7 +202,31 @@ namespace CS_PdfAnalDriver
 			}
 
 			txtStream.Text = string.Empty;
-			var idx = (int)e.Node.Tag;
+			var idxObj = e.Node.Tag as ObjInfo;
+			var idx = -1;
+			if(idxObj != null && idxObj.idx_ >= 0) {
+				idx = idxObj.idx_;
+			}
+			else if(chkRefResolve.Checked && idxObj.pdfObj_ != null && idxObj.pdfObj_.ContainsKey("$Type")) {
+				// resolve obj ref;
+				var objnum = Convert.ToInt32(idxObj.pdfObj_["num"]);
+				idxObj.idx_ = objnum;
+				var len = PdfAnal.analObject(key_, objnum);
+				var buff = new byte[len]; //new StringBuilder((int)len);
+				PdfAnal.getBuff(key_, buff);
+
+				var docstr = Encoding.UTF8.GetString(buff);
+
+				var jsr = new Newtonsoft.Json.JsonReader(new StringReader(docstr));
+				var js = new Newtonsoft.Json.JsonSerializer();
+				var jsroot = js.Deserialize(jsr);
+
+				e.Node.Nodes.Clear();
+				jsoFunc(jsroot, "", null, e.Node, false, 10);	// 10は適当
+			}
+			else {
+				return;
+			}
 			var stmlen = PdfAnal.analObjStream(key_, idx);
 			if(stmlen == 0) {
 				return;
@@ -171,7 +256,7 @@ namespace CS_PdfAnalDriver
 			if(trg == null || trg.Tag == null || key_ == 0) {
 				return;
 			}
-			var idx = (int)trg.Tag;
+			var idx = (trg.Tag as ObjInfo).idx_;
 			var stmlen = PdfAnal.analObjStream(key_, idx);
 			if(stmlen == 0) {
 				return;

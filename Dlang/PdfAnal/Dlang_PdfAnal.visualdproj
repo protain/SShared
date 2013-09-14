@@ -191,9 +191,12 @@
  <Folder name="Dlang_PdfAnal">
   <File path="dll.def" />
   <File path="dllmain.d" />
+  <File path="PdfDecoder.d" />
   <File path=".\PdfDocument.d" />
+  <File path="PdfGeom.d" />
   <File path=".\PdfLexer.d" />
   <File path=".\PdfObjects.d" />
+  <File path="PdfPage.d" />
   <File path=".\PdfReader.d" />
  </Folder>
 </DProject>

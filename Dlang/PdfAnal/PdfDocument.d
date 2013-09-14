@@ -9,7 +9,8 @@ import std.array;
 import PdfLexer;
 import PdfStream;
 import PdfObjects;
-
+import PdfPage;
+import PdfDecoder;
 
 class XRefTable
 {
@@ -31,6 +32,7 @@ private:
 	size_t startxref_;
 	XRefTable[] tables_;
 	PdfDictionary[] trailer_;
+	PdfPage[] pages_;
 
 public:
 	@property PdfLexer lexer()
@@ -53,6 +55,19 @@ public:
 		return tables_;
 	}
 
+	@property int pageLength()
+	{
+		if(pages_ is null) {
+			return -1;
+		}
+		return cast(int)pages_.length;
+	}
+
+	@property PdfPage[] pages()
+	{
+		return pages_;
+	}
+
 	private void init()
 	{
 		reader_ = null;
@@ -60,6 +75,7 @@ public:
 		tables_ = null;
 		version_ = 0;
 		trailer_ = null;
+		pages_ = null;
 	}
 
 	this()
@@ -107,6 +123,152 @@ public:
 		} while(xrefstmofs || prevofs);
 	}
 
+	PdfObject dictGetIndObj(PdfObject dict, string key)
+	{
+		auto obj = dict.dictGets(key);
+		if(obj is null) {
+			return null;
+		}
+		if(obj.kind != PdfObjKind.PDF_INDIRECT) {
+			return obj;
+		}
+		auto objnum = obj.value!(int[])[0];
+		return getObject(objnum);
+	}
+
+	PdfObject getIndObj(PdfObject indobj)
+	{
+		if(indobj is null || indobj.kind != PdfObjKind.PDF_INDIRECT) {
+			return indobj;
+		}
+		return getObject(indobj.value!(int[])[0]);
+	}
+
+	void loadPageTree()
+	{
+		if(trailer_ is null || trailer_.length < 1) {
+			throw new Error("PdfDocument not loaded.");
+		}
+		auto catalog = trailer_[0].getValue("Root");
+		if(catalog.kind != PdfObjKind.PDF_DICT) {
+			if(catalog.kind != PdfObjKind.PDF_INDIRECT) {
+				throw new Error("missing page tree");
+			}
+			auto objno = catalog.value!(int[])[0];
+			catalog = getObject(objno);
+			//to!string(catalog).writeln;
+		}
+		auto pages = dictGetIndObj(catalog, "Pages");
+		auto count = dictGetIndObj(pages, "Count");
+
+		if(pages is null) {
+			throw new Error("missing page tree");
+		}
+		if(count is null) {
+			throw new Error("missing page count");
+		}
+		loadPageTreeNode(pages);
+	}
+
+	private void loadPageTreeNode(PdfObject node)
+	{
+		struct PdfPageInfo
+		{
+			PdfObject resources_;
+			PdfObject mediabox_;
+			PdfObject cropbox_;
+			PdfObject rotate_;
+		}
+		class PageLoad
+		{
+			PdfArray kids_;
+			PdfObject node_;
+			int max_;
+			int pos_;
+			PdfPageInfo info_;
+		}
+		PageLoad stack[];
+		pages_ = null;
+		int stacklen = -1;
+		int pageCap = 0;
+		int pageLen = 0;
+		PdfPageInfo info;
+		do {
+			if(node is null) {
+
+			}
+			else {
+				auto kids = dictGetIndObj(node, "Kids");
+				auto count = dictGetIndObj(node, "Count");
+				if(kids !is null && kids.kind == PdfObjKind.PDF_ARRAY &&
+					count !is null && count.kind == PdfObjKind.PDF_INT && count.value!(int))
+				{
+					auto obj = node.dictGets("Resources");
+					if(obj !is null) {
+						info.resources_ = obj;
+					}
+					obj = node.dictGets("MediaBox");
+					if(obj !is null) {
+						info.mediabox_ = obj;
+					}
+					obj = node.dictGets("CropBox");
+					if(obj !is null) {
+						info.cropbox_ = obj;
+					}
+					obj = node.dictGets("Rotate");
+					if(obj !is null) {
+						info.rotate_ = obj;
+					}
+					//"stacklen:%d".format(stacklen).writeln;
+					stack.length = (++stacklen + 1);
+					if(stack[stacklen] is null) {
+						stack[stacklen] = new PageLoad;
+					}
+					stack[stacklen].kids_ = cast(PdfArray)kids;
+					stack[stacklen].node_ = node;
+					stack[stacklen].pos_ = -1;
+					stack[stacklen].max_ = kids.arrayLen;
+					stack[stacklen].info_ = info;
+				}
+				else if(node.kind == PdfObjKind.PDF_DICT) {
+					auto dict = cast(PdfDictionary)node;
+					if(info.resources_ !is null && dict.getValue("Resources") is null) {
+						dict.dictPuts("Resources", info.resources_);
+					}	
+					if(info.mediabox_ !is null && dict.getValue("MediaBox") is null) {
+						dict.dictPuts("MediaBox", info.mediabox_);
+					}	
+					if(info.cropbox_ !is null && dict.getValue("CropBox") is null) {
+						dict.dictPuts("CropBox", info.cropbox_);
+					}	
+					if(info.rotate_ !is null && dict.getValue("Rotate") is null) {
+						dict.dictPuts("Rotate", info.rotate_);
+					}
+					if(pageLen == pageCap) {
+						pageCap++;
+						pages_.length = pageCap;
+					}
+					pages_[pageLen] = new PdfPage(this, cast(PdfDictionary)dict);
+					++pageLen;
+				}
+				if(stacklen < 0) {
+					break;
+				}
+				while(++stack[stacklen].pos_ == stack[stacklen].max_) {
+					stacklen--;
+					if(stacklen < 0) {
+						break;
+					}
+					node = stack[stacklen].node_;
+					info = stack[stacklen].info_;
+				}
+				if(stacklen >= 0) {
+					node = getIndObj(stack[stacklen].kids_.arrayGets(stack[stacklen].pos_));
+				}
+			}
+		} while(stacklen >= 0);
+	}
+
 	PdfDictionary[] getTrailers()
 	{
 		if(trailer_ is null || trailer_.length == 0) {
@@ -132,7 +294,9 @@ public:
 
 		if(tables_[num].type != 'n') {
 			if(tables_[num].type == 'o') {
-				return getObject(cast(int)tables_[num].ofs);
+				// decode object stream
+				getObject(cast(int)tables_[num].ofs);
+				return getObject(num);
 			}
 			return null;
 		}
@@ -390,6 +554,7 @@ public:
 			}
 			streamOffsets = 0;
 		}
+		obj.objno = num;
 
 		return obj;
 	}
@@ -454,10 +619,10 @@ public:
 		}
 
 		string filters[];
-		if(filterObj.kind != PdfObjKind.PDF_STRING) {
+		if(filterObj.kind == PdfObjKind.PDF_NAME) {
 			filters ~= filterObj.value!string;
 		}
-		else if(filterObj.kind != PdfObjKind.PDF_ARRAY) {
+		else if(filterObj.kind == PdfObjKind.PDF_ARRAY) {
 			foreach(filter; filterObj.value!(PdfObject[])) {
 				filters ~= filter.value!string;
 			}
@@ -465,16 +630,15 @@ public:
 		else {
 			throw new Error("expected Filters in object (%d %d R)".format(num, gen));
 		}
-		// ★★★暫定(only for flate decode)
-		if(filters.length > 1 || (filters[0] != "FlateDecode" && filters[0] != "DCTDecode")) {
-			throw new Error("filter supported only 'FlateDecode'");
+		PdfDecoder[] decoders;
+		foreach(idx, flt; filters) {
+			auto dec = PdfDecoder.PdfDecoder.create(flt, stmobj);
+			if(decoders.length > 0) {
+				decoders[idx - 1].next = dec;
+			}
+			decoders ~= dec;
 		}
-		if(filters[0] == "DCTDecode") {
-			return stm;
-		}
-
-		import std.zlib;
-		auto xtbl = cast(ubyte[])(std.zlib.uncompress(stm));
+		auto xtbl = decoders[0].decode(stm);
 
 		int predictor = 1;
 		if(params !is null) {
@@ -497,7 +661,7 @@ public:
 
 
 
-		// ★★★超暫定
+		// ★★★超暫定(predictor 処理)
 		ubyte[] dst;
 		auto ds = new MemoryReader(xtbl);
 		auto prev = new ubyte[columns];

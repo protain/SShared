@@ -64,6 +64,7 @@ export extern(C)
 		}
 		auto doc = new PdfDocument();
 		doc.loadDocument(fpath);
+		doc.loadPageTree();
 		objectTable[++key_] = new DocHolder(doc);
 		return key_;
 	}
@@ -75,6 +76,28 @@ export extern(C)
 			objectTable.remove(key);
 			core.memory.GC.collect();
 		}
+	}
+
+	ulong analPages(ulong key)
+	{
+		if(key !in objectTable) {
+			return 0;
+		}
+		auto holder = objectTable[key];
+		auto doc = holder.doc_;
+
+		char[] buf;
+		buf ~= "[";
+		foreach(i, p; doc.pages) {
+			if(i != 0) {
+				buf ~= ",";
+			}
+			buf ~= p.toString();
+		}
+		buf ~= "]";
+		holder.resBuf_ = cast(ubyte[])buf;
+
+		return buf.length + 1;
 	}
 
 	ulong analDocument(ulong key)
@@ -113,9 +136,32 @@ export extern(C)
 		}
 		buf ~= "]]";
 
+		delete holder.resBuf_;
 		holder.resBuf_ = cast(ubyte[])buf;
 
 		return buf.length + 1;
+	}
+
+	ulong analObject(ulong key, int objno)
+	{
+		if(key !in objectTable) {
+			return 0;
+		}
+		if(objno < 0) {
+			//"spcific objno option at stream command".writeln;
+			return 0;
+		}
+		auto holder = objectTable[key];
+		auto doc = holder.doc_;
+
+		auto obj = doc.getObject(objno);
+		if(obj is null) {
+			return 0;
+		}
+		delete holder.resBuf_;
+		holder.resBuf_ = cast(ubyte[])obj.toString();
+
+		return holder.resBuf_.length;
 	}
 
 	ulong analObjStream(ulong key, int objno)

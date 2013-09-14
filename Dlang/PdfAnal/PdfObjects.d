@@ -23,6 +23,51 @@ enum PdfObjKind : char
 	PDF_INDIRECT = 'r'
 }
 
+PdfObject dictGets(PdfObject obj, string key)
+{
+	if(obj.kind != PdfObjKind.PDF_DICT) {
+		return null;
+	}
+	auto dict = cast(PdfDictionary)obj;
+	return dict.getValue(key);
+}
+
+PdfObject dictGets(PdfObject obj, string[] keys)
+{
+	if(obj.kind != PdfObjKind.PDF_DICT) {
+		return null;
+	}
+	auto dict = cast(PdfDictionary)obj;
+	return dict.getValue(keys);
+}
+
+PdfObject arrayGets(PdfObject obj, size_t idx)
+{
+	if(obj.kind != PdfObjKind.PDF_ARRAY) {
+		return null;
+	}
+	auto ary = obj.value!(PdfObject[]);
+	return ary[idx];
+}
+
+void dictPuts(PdfObject obj, string key, PdfObject value)
+{
+	if(obj.kind != PdfObjKind.PDF_DICT) {
+		return;
+	}
+	auto val = obj.value!(PdfObject[string]);
+	val[key] = value;
+}
+
+int arrayLen(PdfObject obj)
+{
+	if(obj.kind != PdfObjKind.PDF_ARRAY) {
+		return -1;
+	}
+	auto ary = cast(PdfArray)obj;
+	return cast(int)(ary.value!(PdfObject[]).length);
+}
+
 abstract class PdfObject
 {
 protected:
@@ -37,6 +82,7 @@ protected:
 		float f_;
 		bool b_;
 	}
+	int objno_;
 	int refs_;
 	char marked_;
 
@@ -46,8 +92,10 @@ protected:
 	}
 
 public:
-	this() { refs_ = 1; marked_ = 0; v.array_ = null; v.f_ = 0f; }
+	this() { refs_ = 1; marked_ = 0; v.array_ = null; v.f_ = 0f; objno_ = -1; }
 
+	@property int objno() { return objno_; }
+	@property void objno(int num) { objno_ = num; }
 	@property int refs() { return refs_; }
 	@property char marked() { return marked_; }
 	@property PdfObjKind kind();
@@ -57,11 +105,21 @@ public:
 		static if(__traits(isScalar, T)) {
 			static if(is(T : int) || is(T : size_t)) {
 				assert(kind == PdfObjKind.PDF_INT || kind == PdfObjKind.PDF_REAL);
-				return cast(T)v.i_;
+				if(kind == PdfObjKind.PDF_INT) {
+					return cast(T)v.i_;
+				}
+				else {
+					return to!int(v.f_);
+				}
 			}
 			else static if(is(T : float)) {
 				assert(kind == PdfObjKind.PDF_INT || kind == PdfObjKind.PDF_REAL);
-				return cast(T)v.f_;
+				if(kind == PdfObjKind.PDF_INT) {
+					return to!T(v.i_);
+				}
+				else {
+					return cast(T)v.f_;
+				}
 			}
 			else static if(is(T : bool)) {
 				assert(kind == PdfObjKind.PDF_BOOL);
