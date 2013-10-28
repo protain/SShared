@@ -23,6 +23,14 @@ public:
 	ubyte[] stmBuff;
 }
 
+class PdfSaveOption
+{
+	bool doExpand_;
+	bool doGarbage_;
+	bool doAscii_;
+	bool doLinear_;
+}
+
 class PdfDocument
 {
 private:
@@ -35,6 +43,7 @@ private:
 	PdfPage[] pages_;
 
 public:
+
 	@property PdfLexer lexer()
 	{
 		return lexer_;
@@ -345,6 +354,25 @@ public:
 		return tables_[num].obj;
 	}
 
+	bool setStream(int num, ubyte[] stm)
+	{
+		if(tables_ is null || tables_.length == 0) {
+			throw new Error("PdfDocument not loaded.");
+		}
+		if(num >= tables_.length || tables_[num] is null) {
+			throw new Error("expected object no");
+		}
+		auto trg = tables_[num];
+		if(trg.streamOnFS == 0) {
+			return false;
+		}
+		trg.stmBuff = stm.dup;
+		// ****
+		trg.streamOnFS = 0;
+
+		return true;
+	}
+
 	ubyte[] getStream(int num)
 	{
 		if(tables_ is null || tables_.length == 0) {
@@ -363,11 +391,11 @@ public:
 		}
 
 		auto trg = tables_[num];
-		if(trg.streamOnFS == 0) {
-			return null;
-		}
 		if(trg.stmBuff !is null) {
 			return trg.stmBuff;
+		}
+		if(trg.streamOnFS == 0) {
+			return null;
 		}
 		PdfDictionary dict;
 		if(trg.obj is null) {
@@ -638,70 +666,13 @@ public:
 			}
 			decoders ~= dec;
 		}
-		auto xtbl = decoders[0].decode(stm);
-
-		int predictor = 1;
 		if(params !is null) {
-			auto predObj = params.getValue("Predictor");
-			if(predObj !is null) {
-				predictor = predObj.value!int;
-			}
+			auto dec = new PredictDecoder();
+			dec.init(params);
+			decoders[$ - 1].next = dec;
+			decoders ~= dec;
 		}
-		if(predictor <= 1) {
-			return xtbl;
-		}
-		int columns = 1;
-		auto colObj = params.getValue("Columns");
-		if(colObj !is null) {
-			columns = colObj.value!int;
-		}
-		int bpc  = 8, colors = 1;
-		int stride = (bpc * colors * columns + 7) / 8;
-		int bpp = (bpc * colors + 7) / 8;
-
-
-
-		// ★★★超暫定(predictor 処理)
-		ubyte[] dst;
-		auto ds = new MemoryReader(xtbl);
-		auto prev = new ubyte[columns];
-		auto rows = new ubyte[columns];
-		size_t rowpos = rows.length;
-		size_t count = xtbl.length;
-		int ret = 0;
-		while(ret < xtbl.length) {
-			if(rowpos >= rows.length) {
-				ds.readByte();
-				/*
-				if(ds.readByte() != 2) {
-				throw new Error("unknown predictor type");
-				}
-				*/
-				for(int i = 0; i < prev.length; ++i) {
-					prev[i] = rows[i];
-				}
-				int len = 0;
-				for(; len < rows.length; ++len) {
-					rows[len] = ds.readByte();
-					if(ds.eof) {
-						break;
-					}
-				}
-				if((len + 1) < rows.length) {
-					break;
-				}
-				for(int i = 0; i < rows.length; ++i) {
-					rows[i] += prev[i];
-				}
-				rowpos = 0;
-			}
-			size_t rlen = (count - ret) > (rows.length - rowpos) ? rows.length - rowpos : count - ret;
-			dst ~= rows[rowpos..(rowpos + rlen)];
-			ret += rlen;
-			rowpos += rlen;
-		}
-
-		return dst;
+		return decoders[0].decode(stm);
 	}
 
 	private PdfObject readCompressedXRef()
@@ -862,5 +833,198 @@ public:
 		trailer.parse(this.lexer);
 
 		return trailer;
+	}
+
+	import std.stream;
+
+	class PdfSaveInfo
+	{
+		int start_;
+		int[] useList_;
+		int[] ofsList_;
+		int[] genList_;
+		int[] renumberMap_;
+		int[] revNumberMap_;
+		int[] revGenList_;
+		size_t firstXrefOffset_;
+		PdfSaveOption option_;
+		std.stream.File ofs_;
+
+		void flush()
+		{
+			ofs_.close();
+		}
+	}
+
+	void writeDocument(string filename, PdfSaveOption option)
+	{
+		auto inf = new PdfSaveInfo;
+		scope(exit) { inf.flush(); }
+		inf.start_ = 0;
+		inf.useList_.length = tables_.length;
+		inf.ofsList_.length = tables_.length;
+		inf.genList_.length = tables_.length;
+		inf.renumberMap_.length = tables_.length;
+		inf.revNumberMap_.length = tables_.length;
+		inf.revGenList_.length = tables_.length;
+		inf.option_ = option;
+		inf.firstXrefOffset_ = 0;
+		inf.ofs_ = new std.stream.File(filename, FileMode.OutNew);
+
+		for(int num = 0; num < tables_.length; ++num) {
+			inf.renumberMap_[num] = num;
+			inf.revNumberMap_[num] = num;
+			inf.revGenList_[num] = tables_[num].gen;
+		}
+		// preload object streams
+		for(int num = 0; num < tables_.length; ++num) {
+			this.getObject(num);
+			this.getStream(num);
+			inf.useList_[num] = 1;
+		}
+
+		// write objects
+		inf.ofs_.writeString("%%PDF-%d.%d\n".format(version_ / 10, version_ % 10));
+		inf.ofs_.writeString("%\xE2\xE3\xCF\xD3\r\n");
+
+		doWriteObject(inf, inf.start_, 0);
+
+		for(int num = inf.start_ + 1; num < tables_.length; ++num) {
+			doWriteObject(inf, num, 0);
+		}
+
+		if(inf.option_.doLinear_) {
+		}
+		else {
+			inf.firstXrefOffset_ = cast(size_t)inf.ofs_.position;
+			writeXRef(inf, 0, cast(int)tables_.length, 1, 0, inf.firstXrefOffset_);
+		}
+	}
+
+	private void writeXRef(PdfSaveInfo inf, int from, int to, bool first, int mainXRefOffset, size_t startXRef)
+	{
+		inf.ofs_.writeString("xref\n%d %d\n".format(from, to - from));
+		inf.firstXrefOffset_ = cast(size_t)inf.ofs_.position;
+		for(int num = from; num < to; ++num) {
+			char nf = (inf.useList_[num]) ? 'n' : 'f';
+			inf.ofs_.writeString("%010d %05d %c \n".format(inf.ofsList_[num], inf.genList_[num], nf));
+		}
+		inf.ofs_.writeString("\n");
+
+		auto trailer = new PdfDictionary;
+		auto nobj = new PdfPrimitive(to);
+		trailer.putValue("Size", nobj);
+
+		if(first) {
+			auto tt = trailer_[0];
+			auto obj = tt.dictGets("Info");
+			if(obj !is null) {
+				trailer.putValue("Info", obj);
+			}
+			obj = tt.dictGets("Root");
+			if(obj !is null) {
+				trailer.putValue("Root", obj);
+			}
+			obj = tt.dictGets("ID");
+			if(obj !is null) {
+				trailer.putValue("ID", obj);
+			}
+		}
+		if(mainXRefOffset != 0) {
+			nobj = new PdfPrimitive(mainXRefOffset);
+			trailer.putValue("Prev", nobj);
+		}
+
+		inf.ofs_.writeString("trailer\n");
+		writeObjectIndiv(inf, trailer, inf.option_.doExpand_);
+		inf.ofs_.writeString("\nstartxref\n%d\n%%%%EOF\n".format(startXRef));
+	}
+
+	private void writeObjectIndiv(PdfSaveInfo inf, PdfObject obj, bool doExpand)
+	{
+		inf.ofs_.writeString(obj.formatObject());
+		inf.ofs_.writeString("\n");
+	}
+
+	private void doWriteObject(PdfSaveInfo inf, int num, int pass)
+	{
+		if(false) {}
+		else if(tables_[num].type == 'f') {
+			inf.genList_[num] = tables_[num].gen;
+		}
+		else if(tables_[num].type == 'n') {
+			inf.genList_[num] = tables_[num].gen;
+		}
+		else if(tables_[num].type == 'o') {
+			inf.genList_[num] = 0;
+		}
+
+		if(tables_[num].type == 'n' || tables_[num].type == 'o') {
+			if(pass > 0) {
+				// TODO:
+			}
+			inf.ofsList_[num] = cast(int)inf.ofs_.position;
+			// write object
+
+			auto obj = getObject(num);
+			if(obj is null) {
+			}
+			else if(obj.kind == PdfObjKind.PDF_DICT) {
+				auto type = obj.dictGets("Type");
+				if(type !is null && type.kind == PdfObjKind.PDF_NAME && (type.value!string == "XRef" || type.value!string == "ObjStm")) {
+					inf.useList_[num] = 0;
+					return;
+				}
+			}
+
+			if(tables_[num].stmBuff is null) {
+				inf.ofs_.writeString("%d %d obj\n".format(num, 0));
+				writeObjectIndiv(inf, obj, inf.option_.doExpand_);
+				inf.ofs_.writeString("endobj\n\n");
+			}
+			else if(tables_[num].stmBuff.length == 0) {
+				inf.ofs_.writeString("%d %d obj\n".format(num, 0));
+				writeObjectIndiv(inf, obj, inf.option_.doExpand_);
+				inf.ofs_.writeString("stream\nendstream\nendobj\n\n");
+			}
+			else {
+				/*
+				PdfObject type, subtype;
+				type = obj.dictGets("Type");
+				if(type.nameGets() == "XObject") {
+				}
+				*/
+				// with stream
+				auto cp = new PdfDictionary;
+				if(obj.kind == PdfObjKind.PDF_DICT) {
+					auto kv = obj.value!(PdfObject[string]);
+					foreach(k; kv.keys) {
+						if(k != "Filter" && k != "DecodeParams") {
+							cp.putValue(k, kv[k]);
+						}
+						if(k == "Filter") {
+							PdfObject fltobj = kv[k];
+							if(fltobj.kind == PdfObjKind.PDF_NAME) {
+								auto flt = fltobj.value!string;
+								if(flt != "FlateDecode" && flt != "ASCIIHexDecode") {
+									cp.putValue(k, kv[k]);
+								}
+							}
+						}
+					}
+				}
+				ubyte[] stm = getStream(num);
+				cp.dictPuts("Length", new PdfPrimitive(stm.length));
+
+				inf.ofs_.writeString("%d %d obj\n".format(num, 0));
+				writeObjectIndiv(inf, cp, inf.option_.doExpand_);
+				inf.ofs_.writeString("stream\n");
+				inf.ofs_.write(stm);
+				inf.ofs_.writeString("endstream\nendobj\n\n");
+			}
+		}
+		else {
+			inf.useList_[num] = 0;
+		}
 	}
 }

@@ -25,7 +25,7 @@ enum PdfObjKind : char
 
 PdfObject dictGets(PdfObject obj, string key)
 {
-	if(obj.kind != PdfObjKind.PDF_DICT) {
+	if(obj is null || obj.kind != PdfObjKind.PDF_DICT) {
 		return null;
 	}
 	auto dict = cast(PdfDictionary)obj;
@@ -34,7 +34,7 @@ PdfObject dictGets(PdfObject obj, string key)
 
 PdfObject dictGets(PdfObject obj, string[] keys)
 {
-	if(obj.kind != PdfObjKind.PDF_DICT) {
+	if(obj is null || obj.kind != PdfObjKind.PDF_DICT) {
 		return null;
 	}
 	auto dict = cast(PdfDictionary)obj;
@@ -43,7 +43,7 @@ PdfObject dictGets(PdfObject obj, string[] keys)
 
 PdfObject arrayGets(PdfObject obj, size_t idx)
 {
-	if(obj.kind != PdfObjKind.PDF_ARRAY) {
+	if(obj is null || obj.kind != PdfObjKind.PDF_ARRAY) {
 		return null;
 	}
 	auto ary = obj.value!(PdfObject[]);
@@ -52,20 +52,27 @@ PdfObject arrayGets(PdfObject obj, size_t idx)
 
 void dictPuts(PdfObject obj, string key, PdfObject value)
 {
-	if(obj.kind != PdfObjKind.PDF_DICT) {
+	if(obj is null || obj.kind != PdfObjKind.PDF_DICT) {
 		return;
 	}
-	auto val = obj.value!(PdfObject[string]);
-	val[key] = value;
+	(cast(PdfDictionary)obj).putValue(key, value);
 }
 
 int arrayLen(PdfObject obj)
 {
-	if(obj.kind != PdfObjKind.PDF_ARRAY) {
+	if(obj is null || obj.kind != PdfObjKind.PDF_ARRAY) {
 		return -1;
 	}
 	auto ary = cast(PdfArray)obj;
 	return cast(int)(ary.value!(PdfObject[]).length);
+}
+
+string nameGets(PdfObject obj)
+{
+	if(obj is null || obj.kind != PdfObjKind.PDF_STRING) {
+		return "";
+	}
+	return obj.value!string;
 }
 
 abstract class PdfObject
@@ -161,12 +168,14 @@ public:
 		if(kind != PdfObjKind.PDF_DICT) {
 			return "";
 		}
-		auto tyobj = (cast(PdfDictionary)this).getValue("Type");
+		auto tyobj = this.dictGets("Type");
 		if(tyobj is null) {
 			return "";
 		}
 		return tyobj.value!string;
 	}
+
+	string formatObject();
 }
 
 class PdfNull : PdfObject
@@ -188,6 +197,7 @@ public:
 		return "null";
 	}
 
+	override string formatObject() { return "<NULL>"; }
 }
 
 class PdfArray : PdfObject
@@ -303,6 +313,20 @@ public:
 		buf ~= "]";
 		return cast(string)buf;
 	}
+
+	override string formatObject()
+	{
+		char[] buf;
+		buf ~= "[";
+		foreach(i, PdfObject obj; v.array_) {
+			if(i != 0) {
+				buf ~= " ";
+			}
+			buf ~= obj.formatObject();
+		}
+		buf ~= "]";
+		return cast(string)buf;
+	}
 }
 
 class PdfPrimitive : PdfObject
@@ -360,14 +384,19 @@ public:
 	{
 		switch(kind) {
 		case PdfObjKind.PDF_BOOL:
-			return to!string(v.b_);
+			return v.b_ ? "true" : "false";
 		case PdfObjKind.PDF_INT:
 			return to!string(v.i_);
 		case PdfObjKind.PDF_REAL:
-			return to!string(v.f_);
+			return "%1.9g".format(v.f_);
 		default:
 			throw new Error("unknown kind in PdfPrimitive");
 		}
+	}
+
+	override string formatObject()
+	{
+		return toString();
 	}
 }
 
@@ -387,6 +416,24 @@ public:
 		return cast(T)strValue_;
 	}
 
+	this() {}
+	this(string value, bool isName)
+	{
+		init(value);
+	}
+
+	void init(string val)
+	{
+		v.strValue_ = val.idup;
+		isOnlyAscii_ = true;
+		foreach(c; v.strValue_) {
+			if(c < 0x20 || c > 0x7e) {
+				isOnlyAscii_ = false;
+				break;
+			}
+		}
+	}
+
 	override void parse(PdfLexer lex)
 	{
 		auto tok = lex.currntToken;
@@ -399,14 +446,7 @@ public:
 		else {
 			throw new Error("unknown toke type in PdfString");
 		}
-		v.strValue_ = lex.tokenStr.idup;
-		isOnlyAscii_ = true;
-		foreach(c; v.strValue_) {
-			if(c < 0x20 || c > 0x7e) {
-				isOnlyAscii_ = false;
-				break;
-			}
-		}
+		init(lex.tokenStr.idup);
 	}
 
 	override string toString()
@@ -424,6 +464,74 @@ public:
 				buf ~= "%d".format(c);
 			}
 			buf ~= "]";
+			return cast(string)buf;
+		}
+	}
+
+	override string formatObject()
+	{
+		if(kind == PdfObjKind.PDF_STRING) {
+			char[] buf;
+			if(isOnlyAscii_) {
+				buf ~= "(";
+				foreach(c; v.strValue_) {
+					switch(c) {
+					case '\n':
+						buf ~= "\\n"; break;
+					case '\r':
+						buf ~= "\\r"; break;
+					case '\t':
+						buf ~= "\\t"; break;
+					case '\b':
+						buf ~= "\\b"; break;
+					case '\f':
+						buf ~= "\\f"; break;
+					case '(':
+						buf ~= "\\("; break;
+					case ')':
+						buf ~= "\\)"; break;
+					case '\\':
+						buf ~= "\\\\"; break;
+					default: {
+						if(c < 32 || c >= 127) {
+							buf ~= "\\%03o".format(c);
+						}
+						else {
+							buf ~= c;
+						}
+					}
+						break;
+					}
+				}
+				buf ~= ")";
+			}
+			else {
+				buf ~= "<";
+				foreach(c; v.strValue_) {
+					auto cc = (c >> 4) & 0xf;
+					buf ~= (cc < 0xa ? cc + '0' : cc + 'A' - 0xa);
+					cc = c & 0xf;
+					buf ~= (cc < 0xa ? cc + '0' : cc + 'A' - 0xa);
+				}
+				buf ~= ">";
+			}
+			return cast(string)buf;
+		}
+		else {
+			char[] buf;
+			buf ~= "/";
+			foreach(c; v.strValue_) {
+				if(isDelim(c) || isWhite(c) || c == '#' || c < 32 || c > 127) {
+					buf ~= "#";
+					auto cc = (c >> 4) & 0xf;
+					buf ~= (cc < 0xa ? cc + '0' : (cc + 'A' - 0xa));
+					cc = c & 0xf;
+					buf ~= (cc < 0xa ? cc + '0' : (cc + 'A' - 0xa));
+				}
+				else {
+					buf ~= c;
+				}
+			}
 			return cast(string)buf;
 		}
 	}
@@ -473,6 +581,11 @@ public:
 	{
 		return `{"$Type":"R", "num":%d, "gen":%d}`.format(num, gen);
 	}
+
+	override string formatObject()
+	{
+		return "%d %d R".format(num, gen);
+	}
 }
 
 class PdfDictionary : PdfObject
@@ -498,6 +611,13 @@ public:
 			}
 		}
 		return null;
+	}
+
+	void putValue(string key, PdfObject value, bool overwrite = true)
+	{
+		if(overwrite || key !in v.keyvalue_) {
+			v.keyvalue_[key] = value;
+		}
 	}
 
 	override void parse(PdfLexer lex)
@@ -595,6 +715,20 @@ public:
 			buf ~= `"` ~ kk ~ `":` ~ v.keyvalue_[kk].toString();
 		}
 		buf ~= "}";
+		return cast(string)buf;
+	}
+
+	override string formatObject()
+	{
+		char[] buf;
+		buf ~= "<<";
+		foreach(ii, kk; v.keyvalue_.keys) {
+			if(ii != 0) {
+				buf ~= " ";
+			}
+			buf ~= "/" ~ kk ~ " " ~ v.keyvalue_[kk].formatObject();
+		}
+		buf ~= ">>";
 		return cast(string)buf;
 	}
 }

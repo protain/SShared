@@ -1,6 +1,7 @@
 module dllmain;
 
 import std.c.windows.windows;
+import std.conv;
 import core.sys.windows.dll;
 import PdfLexer;
 import PdfStream;
@@ -47,6 +48,11 @@ string fromExt(char *src)
 class DocHolder
 {
 	this(PdfDocument doc) { doc_ = doc; }
+	~this()
+	{
+		delete doc_;
+		delete resBuf_;
+	}
 	PdfDocument doc_;
 	ubyte[] resBuf_;
 }
@@ -72,6 +78,8 @@ export extern(C)
 	void closeDocument(ulong key)
 	{
 		if(key in objectTable) {
+			auto holder = objectTable[key];
+			delete holder;
 			objectTable[key] = null;
 			objectTable.remove(key);
 			core.memory.GC.collect();
@@ -178,7 +186,7 @@ export extern(C)
 
 		doc.getObject(objno);	// for loding stream offset
 		delete holder.resBuf_;
-		// dupしないと中身が壊されるようだ。。。
+		// broken resBuf_ when no duplicate,
 		holder.resBuf_ = doc.getStream(objno).dup;
 
 		return holder.resBuf_.length;
@@ -192,6 +200,83 @@ export extern(C)
 		auto holder = objectTable[key];
 		foreach(char c; holder.resBuf_) {
 			*(buf++) = c;
+		}
+	}
+
+	bool updateObjectStream(ulong key, int objno, ubyte* buff, ulong buflen)
+	{
+		if(key !in objectTable) {
+			return false;
+		}
+		if(objno < 0) {
+			//"spcific objno option at stream command".writeln;
+			return false;
+		}
+		auto holder = objectTable[key];
+		auto doc = holder.doc_;
+		ubyte[] buf;
+		for(int i = 0; i < buflen; ++i) {
+			buf ~= buff[i];
+		}
+		return doc.setStream(objno, buf);
+	}
+
+	bool updateObjectValue(ulong key, int objno, char *keyz, char *valuez)
+	{
+		if(key !in objectTable) {
+			return false;
+		}
+		if(objno < 0) {
+			//"spcific objno option at stream command".writeln;
+			return false;
+		}
+		auto holder = objectTable[key];
+		auto doc = holder.doc_;
+
+		auto objkey = fromExt(keyz);
+		auto value = fromExt(valuez);
+		auto obj = doc.getObject(objno);	// for loding stream offset
+		auto vobj = obj.dictGets(objkey);
+		if(vobj is null) {
+			return false;
+		}
+		auto trg = cast(PdfDictionary)obj;
+		PdfObject nvobj;
+		switch(vobj.kind) {
+		case PdfObjKind.PDF_INT:
+			trg.putValue(objkey, new PdfPrimitive(to!int(value)));
+			break;
+		case PdfObjKind.PDF_REAL:
+			trg.putValue(objkey, new PdfPrimitive(to!float(value)));
+			break;
+		case PdfObjKind.PDF_BOOL:
+			trg.putValue(objkey, new PdfPrimitive(to!bool(value)));
+			break;
+		case PdfObjKind.PDF_STRING, PdfObjKind.PDF_NAME:
+			trg.putValue(objkey, new PdfString(
+				objkey, vobj.kind == PdfObjKind.PDF_NAME));
+			break;
+		default:
+			return false;
+		}
+
+		return true;
+	}
+
+	void saveDocument(ulong key, char *fpathz)
+	{
+		if(key !in objectTable) {
+			return;
+		}
+		try {
+			auto holder = objectTable[key];
+			auto opt = new PdfDocument.PdfSaveOption;
+			auto fpath = fromExt(fpathz);
+			holder.doc_.writeDocument(fpath, opt);
+		}
+		catch(Throwable e) {
+			auto msg = e.text;
+			throw e;
 		}
 	}
 }

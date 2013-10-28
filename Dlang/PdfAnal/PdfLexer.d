@@ -186,16 +186,10 @@ private:
 				break;
 			}
 			else if(c == '#') {
-				int d;
+				int d = 0;
 				c = reader_.readByte();
-				if('0' <= c && c <= '9') {
-					d = (c - '0') << 4;
-				}
-				else if('a' <= c && c <= 'f') {
-					d = (c - 'a') << 4;
-				}
-				else if('A' <= c && c <= 'F') {
-					d = (c - 'A') << 4;
+				if(isHex(c)) {
+					d = unhex(c);
 				}
 				else {
 					reader_.previous();
@@ -204,14 +198,8 @@ private:
 					break;
 				}
 				c = reader_.readByte();
-				if('0' <= c && c <= '9') {
-					c -= '0';
-				}
-				else if('a' <= c && c <= 'f') {
-					c -= 'a' - 10;
-				}
-				else if('A' <= c && c <= 'F') {
-					c -= 'A' - 10;
+				if(isHex(c)) {
+					d = cast(ubyte)(d << 4) | (unhex(c));
 				}
 				else {
 					reader_.previous();
@@ -220,7 +208,7 @@ private:
 					lexBuf_ ~= cast(ubyte)d;
 					break;
 				}
-				lexBuf_ ~= cast(ubyte)(d + c);
+				lexBuf_ ~= cast(ubyte)(d);
 			}
 			else {
 				lexBuf_ ~= c;
@@ -369,6 +357,8 @@ private:
 							}
 							break;
 					}
+					break;
+
 				default:
 					lexBuf_ ~= c;
 					break;

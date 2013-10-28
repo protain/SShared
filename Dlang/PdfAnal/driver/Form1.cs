@@ -21,6 +21,8 @@ namespace CS_PdfAnalDriver
 			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
 			public extern static ulong getPdfDocument(string pdfpath);
 			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
+			public extern static void saveDocument(ulong key, string pdfpath);
+			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
 			public extern static ulong analDocument(ulong key);
 			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
 			public extern static ulong analPages(ulong key);
@@ -34,6 +36,10 @@ namespace CS_PdfAnalDriver
 			public extern static ulong analObjStream(ulong key, int objno);
 			[DllImport("Dlang_PdfAnal.dll", CallingConvention=CallingConvention.Cdecl)]
 			public extern static ulong analObject(ulong key, int objno);
+			[DllImport("Dlang_PdfAnal.dll", CallingConvention = CallingConvention.Cdecl)]
+			public extern static bool updateObjectValue(ulong key, int objno, string keyz, string value);
+			[DllImport("Dlang_PdfAnal.dll", CallingConvention = CallingConvention.Cdecl)]
+			public extern static bool updateObjectStream(ulong key, int objno, byte[] buff, ulong buflen);
 		}
 
 		public Form1()
@@ -109,6 +115,7 @@ namespace CS_PdfAnalDriver
 		{
 			public int idx_ = 1;
 			public JavaScriptObject pdfObj_;
+			public bool refresolve_ = false;
 		}
 
 		Action<Object, string, TreeView, TreeNode, bool, int> jsoFunc;
@@ -207,7 +214,7 @@ namespace CS_PdfAnalDriver
 			if(idxObj != null && idxObj.idx_ >= 0) {
 				idx = idxObj.idx_;
 			}
-			else if(chkRefResolve.Checked && idxObj.pdfObj_ != null && idxObj.pdfObj_.ContainsKey("$Type")) {
+			else if(chkRefResolve.Checked && idxObj.pdfObj_ != null && idxObj.pdfObj_.ContainsKey("$Type") && idxObj.refresolve_ == false) {
 				// resolve obj ref;
 				var objnum = Convert.ToInt32(idxObj.pdfObj_["num"]);
 				idxObj.idx_ = objnum;
@@ -223,6 +230,8 @@ namespace CS_PdfAnalDriver
 
 				e.Node.Nodes.Clear();
 				jsoFunc(jsroot, "", null, e.Node, false, 10);	// 10は適当
+
+				e.Node.Text = string.Format("{0} ({1} 0 R)", e.Node.Text, objnum);
 			}
 			else {
 				return;
@@ -271,6 +280,15 @@ namespace CS_PdfAnalDriver
 			using(var fs = new FileStream(sfd.FileName, FileMode.Create, FileAccess.Write)) {
 				fs.Write(stmbuf, 0, stmbuf.Length);
 			}
+		}
+
+		private void mnuSaveDocToolStripMenuItem_Click(object sender, EventArgs e)
+		{
+			var sfd = new SaveFileDialog();
+			if(sfd.ShowDialog() != System.Windows.Forms.DialogResult.OK) {
+				return;
+			}
+			PdfAnal.saveDocument(key_, sfd.FileName);
 		}
 	}
 }
